@@ -7,5 +7,5 @@ Este Simulador Redes Neuronales permitirá ver cómo la red neuronal va aprendie
 - Abir en el navegador
 
 # Versión en línea
-- https://jorgecif.github.io/ahorcadoIA/
+- https://jorgecif.github.io/redesneuronales/
 
