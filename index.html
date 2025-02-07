@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Visualizador de Red, Datos y Loss</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f0f2f5;
+      color: #333;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      margin-bottom: 10px;
+    }
+    form {
+      margin-bottom: 20px;
+      background: #fff;
+      padding: 15px 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    label {
+      font-weight: bold;
+    }
+    input[type="text"] {
+      padding: 5px 10px;
+      margin: 0 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      width: 150px;
+    }
+    button {
+      padding: 5px 15px;
+      border: none;
+      background: #007bff;
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .canvas-container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+    }
+    canvas {
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+  <h1>Visualizador de Red, Problema de Clasificación y Loss</h1>
+  <form id="configForm">
+    <label for="topologia">Topología (neurona por capa, separados por comas):</label>
+    <input type="text" id="topologia" placeholder="3,5,2" required>
+    <button type="submit">Iniciar Entrenamiento</button>
+  </form>
+
+  <div class="canvas-container">
+    <!-- Canvas para la visualización de la red neuronal -->
+    <canvas id="networkCanvas" width="800" height="600"></canvas>
+    <!-- Canvas para la visualización de la nube de puntos -->
+    <canvas id="dataCanvas" width="400" height="400"></canvas>
+    <!-- Canvas para la gráfica del loss -->
+    <canvas id="lossCanvas" width="800" height="200"></canvas>
+  </div>
+
+  <script>
+    /********** VARIABLES Y CONFIGURACIONES **********/
+    // Para la red neuronal:
+    let layers = [];      // Cada elemento es un array de neuronas {x, y}
+    let connections = []; // Cada conexión: {from, to, weight}
+    let animationId = null;
+
+    // Para simular el proceso de entrenamiento (loss)
+    let loss = 2.0;             // Valor inicial del loss
+    const lossDecay = 0.995;    // Factor de decaimiento por iteración
+    let lossHistory = [];
+
+    // Para el problema de clasificación: generamos una nube de puntos (dos clases)
+    let dataPoints = [];
+
+    // Canvas y contextos
+    const networkCanvas = document.getElementById("networkCanvas");
+    const ctxNetwork = networkCanvas.getContext("2d");
+
+    const dataCanvas = document.getElementById("dataCanvas");
+    const ctxData = dataCanvas.getContext("2d");
+
+    const lossCanvas = document.getElementById("lossCanvas");
+    const ctxLoss = lossCanvas.getContext("2d");
+
+    /********** FUNCIONES PARA LA RED NEURONAL **********/
+    function initNetwork(topology) {
+      layers = [];
+      connections = [];
+      const marginX = 100;
+      const marginY = 50;
+      const canvasWidth = networkCanvas.width;
+      const canvasHeight = networkCanvas.height;
+      const numLayers = topology.length;
+
+      // Calcular posiciones de las neuronas en cada capa
+      topology.forEach((numNeurons, layerIndex) => {
+        const layer = [];
+        const totalHeight = canvasHeight - 2 * marginY;
+        const gapY = numNeurons > 1 ? totalHeight / (numNeurons - 1) : 0;
+        const x = marginX + (canvasWidth - 2 * marginX) * layerIndex / (numLayers - 1);
+        for (let i = 0; i < numNeurons; i++) {
+          const y = marginY + gapY * i;
+          layer.push({ x, y });
+        }
+        layers.push(layer);
+      });
+
+      // Crear conexiones entre capas adyacentes con pesos aleatorios
+      for (let i = 0; i < layers.length - 1; i++) {
+        const currentLayer = layers[i];
+        const nextLayer = layers[i + 1];
+        currentLayer.forEach((fromNeuron, idxFrom) => {
+          nextLayer.forEach((toNeuron, idxTo) => {
+            // Peso aleatorio entre -1 y 1
+            const weight = Math.random() * 2 - 1;
+            connections.push({
+              from: { layer: i, index: idxFrom },
+              to: { layer: i + 1, index: idxTo },
+              weight: weight
+            });
+          });
+        });
+      }
+    }
+
+    // Actualiza pesos de las conexiones (simulación de entrenamiento)
+    function updateWeights() {
+      connections.forEach(conn => {
+        const delta = (Math.random() - 0.5) * 0.1;
+        conn.weight += delta;
+        conn.weight = Math.max(-1, Math.min(1, conn.weight));
+      });
+    }
+
+    // Mapea un peso a estilo (color y grosor)
+    function getConnectionStyle(weight) {
+      const lineWidth = 0.5 + Math.abs(weight) * 4.5;
+      const opacity = 0.3 + 0.7 * Math.abs(weight);
+      const color = weight >= 0 ? `rgba(0, 0, 255, ${opacity})` : `rgba(255, 0, 0, ${opacity})`;
+      return { lineWidth, color };
+    }
+
+    // Dibuja la red neuronal en su canvas
+    function drawNetwork() {
+      ctxNetwork.clearRect(0, 0, networkCanvas.width, networkCanvas.height);
+      // Dibujar conexiones
+      connections.forEach(conn => {
+        const fromNeuron = layers[conn.from.layer][conn.from.index];
+        const toNeuron = layers[conn.to.layer][conn.to.index];
+        const style = getConnectionStyle(conn.weight);
+        ctxNetwork.beginPath();
+        ctxNetwork.moveTo(fromNeuron.x, fromNeuron.y);
+        ctxNetwork.lineTo(toNeuron.x, toNeuron.y);
+        ctxNetwork.strokeStyle = style.color;
+        ctxNetwork.lineWidth = style.lineWidth;
+        ctxNetwork.stroke();
+      });
+      // Dibujar neuronas
+      layers.forEach(layer => {
+        layer.forEach(neuron => {
+          ctxNetwork.beginPath();
+          ctxNetwork.arc(neuron.x, neuron.y, 15, 0, Math.PI * 2);
+          ctxNetwork.fillStyle = "#fff";
+          ctxNetwork.fill();
+          ctxNetwork.strokeStyle = "#333";
+          ctxNetwork.lineWidth = 2;
+          ctxNetwork.stroke();
+        });
+      });
+    }
+
+    /********** FUNCIONES PARA LA NUBE DE PUNTOS (CLASIFICACIÓN) **********/
+    // Genera datos para dos clases (clusters)
+    function initDataset() {
+      dataPoints = [];
+      const numPoints = 100;
+      // Clase 0: centro en (120, 200)
+      // Clase 1: centro en (280, 200)
+      for (let i = 0; i < numPoints; i++) {
+        const x0 = 120 + (Math.random() - 0.5) * 80;
+        const y0 = 200 + (Math.random() - 0.5) * 80;
+        dataPoints.push({ x: x0, y: y0, label: 0 });
+        const x1 = 280 + (Math.random() - 0.5) * 80;
+        const y1 = 200 + (Math.random() - 0.5) * 80;
+        dataPoints.push({ x: x1, y: y1, label: 1 });
+      }
+    }
+
+    // Dibuja la nube de puntos en su canvas
+    function drawDataset() {
+      ctxData.clearRect(0, 0, dataCanvas.width, dataCanvas.height);
+      dataPoints.forEach(p => {
+        ctxData.beginPath();
+        ctxData.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        // Color según la etiqueta: azul para 0, naranja para 1
+        ctxData.fillStyle = p.label === 0 ? "rgba(0, 0, 255, 0.7)" : "rgba(255, 165, 0, 0.7)";
+        ctxData.fill();
+        ctxData.strokeStyle = "#333";
+        ctxData.stroke();
+      });
+    }
+
+    /********** FUNCIONES PARA LA GRÁFICA DEL LOSS **********/
+    function updateLoss() {
+      // Simulamos un decay exponencial con algo de ruido
+      loss *= lossDecay;
+      loss += (Math.random() - 0.5) * 0.01; // pequeña variación
+      loss = Math.max(0, loss);
+      lossHistory.push(loss);
+      // Limitar el historial a lo que permite el ancho del canvas
+      if (lossHistory.length > lossCanvas.width) {
+        lossHistory.shift();
+      }
+    }
+
+    function drawLossGraph() {
+      ctxLoss.clearRect(0, 0, lossCanvas.width, lossCanvas.height);
+      // Dibujar fondo y ejes
+      ctxLoss.strokeStyle = "#ccc";
+      ctxLoss.lineWidth = 1;
+      ctxLoss.beginPath();
+      ctxLoss.moveTo(0, lossCanvas.height - 20);
+      ctxLoss.lineTo(lossCanvas.width, lossCanvas.height - 20);
+      ctxLoss.stroke();
+      
+      // Dibujar la gráfica del loss
+      ctxLoss.beginPath();
+      const maxLoss = 2.0; // Valor inicial
+      const minLoss = 0;
+      lossHistory.forEach((l, index) => {
+        // Mapear el loss al eje Y (invertido: loss alto en la parte baja)
+        const x = index;
+        const y = ((l - minLoss) / (maxLoss - minLoss));
+        const yPos = (lossCanvas.height - 20) - y * (lossCanvas.height - 40);
+        if (index === 0) {
+          ctxLoss.moveTo(x, yPos);
+        } else {
+          ctxLoss.lineTo(x, yPos);
+        }
+      });
+      ctxLoss.strokeStyle = "#28a745";
+      ctxLoss.lineWidth = 2;
+      ctxLoss.stroke();
+
+      // Mostrar el valor actual del loss
+      ctxLoss.fillStyle = "#333";
+      ctxLoss.font = "14px Arial";
+      ctxLoss.fillText("Loss: " + loss.toFixed(3), 10, 20);
+    }
+
+    /********** FUNCIÓN DE ANIMACIÓN PRINCIPAL **********/
+    function animate() {
+      updateWeights();
+      drawNetwork();
+
+      updateLoss();
+      drawLossGraph();
+
+      // La nube de puntos es estática, pero la red y el loss se actualizan en tiempo real
+      animationId = requestAnimationFrame(animate);
+    }
+
+    /********** MANEJO DEL FORMULARIO **********/
+    document.getElementById("configForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+      // Obtener la topología del input (ejemplo "3,5,2")
+      const topoInput = document.getElementById("topologia").value;
+      const topology = topoInput.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n > 0);
+      if (topology.length < 2) {
+        alert("La topología debe tener al menos 2 capas.");
+        return;
+      }
+      // Reiniciar valores
+      loss = 2.0;
+      lossHistory = [];
+      initNetwork(topology);
+      animate();
+    });
+
+    /********** INICIALIZACIONES AL CARGAR LA PÁGINA **********/
+    window.addEventListener("load", () => {
+      document.getElementById("topologia").value = "3,5,2";
+      initDataset();
+      drawDataset();
+      // Iniciar la simulación con la topología por defecto
+      const event = new Event('submit');
+      document.getElementById("configForm").dispatchEvent(event);
+    });
+  </script>
+</body>
+</html>
